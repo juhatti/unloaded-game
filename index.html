@@ -30,10 +30,10 @@
 
     <div id="setup-screen" class="card">
       <input type="text" id="player-name" placeholder="ENTER ALIAS..." maxlength="12">
-      <button onclick="createRoom()">CREATE SALOON (HOST)</button>
       <hr style="border-color: #8b4513; margin: 15px 0;">
-      <input type="text" id="room-code-input" placeholder="ROOM CODE (E.G. A1B2)" style="text-transform: uppercase;">
+      <button onclick="createRoom()">CREATE SALOON</button>
       <button onclick="joinRoom()">JOIN DUEL</button>
+      <input type="text" id="room-code-input" placeholder="ROOM CODE (E.G. A1B2)" style="text-transform: uppercase;">
     </div>
 
     <!-- Message Banner (Outside & Below Setup Screen) -->
@@ -53,7 +53,7 @@
       <button id="perm-btn" onclick="requestMotionPermission()">ENABLE SENSOR & WAKE LOCK</button>
       
       <p id="sensor-instruction" style="font-size: 8px; line-height: 1.5; color: #a87d4f; margin: 15px 0;">
-        Place your phone face down on the table! Keep it completely still.
+        Place your phone on the table! Keep it completely still.
       </p>
 
       <div style="font-size: 10px; margin-top: 15px; text-align: left;">GUNSLINGERS:</div>
@@ -67,6 +67,37 @@
 
     <!-- Message Banner (Outside & Below Room Screen) -->
     <div id="room-message" class="message-banner"></div>
+  </div>
+
+  <!-- PLAYER PROFILE SCREEN CONTAINER -->
+  <div id="profile-container" style="display:none;">
+    <div id="profile-screen" class="card">
+      <h2 id="profile-alias-title" style="font-size: 14px; margin-bottom: 15px; color: #f4c430; word-break: break-all;">-</h2>
+      
+      <!-- 150x150 Avatar Placeholder -->
+      <div class="avatar-placeholder">AVATAR</div>
+
+      <div class="stats-container">
+        <div class="stat-row">
+          <span class="stat-label">DUELS:</span>
+          <span id="stat-duels" class="stat-value">0</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">SURVIVED:</span>
+          <span id="stat-survived" class="stat-value">0 (0%)</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">AVG TIME:</span>
+          <span id="stat-avg-time" class="stat-value">0s</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">MAX SURVIVED:</span>
+          <span id="stat-max-time" class="stat-value">0s</span>
+        </div>
+      </div>
+
+      <button class="btn-secondary" onclick="closeProfileScreen()">BACK TO SALOON</button>
+    </div>
   </div>
 
   <script>
@@ -105,6 +136,8 @@
 
     let stealthGlanceInterval = null;
     let stealthInitialTimer = null;
+
+    const DEFAULT_ALIASES = ["SHERIFF", "OUTLAW"];
 
     // --- INLINE MESSAGE / NOTIFICATION SYSTEM ---
     function showMessage(text, targetScreen = 'setup') {
@@ -192,6 +225,7 @@
 
     function enterRoom() {
       document.getElementById('setup-container').style.display = 'none';
+      document.getElementById('profile-container').style.display = 'none';
       document.getElementById('room-container').style.display = 'block';
       document.getElementById('display-room-code').innerText = currentRoomCode;
 
@@ -201,6 +235,9 @@
         status: 'MOVING',
         isHost: isHost
       });
+
+      // Register/initialize stats if unique alias
+      ensurePlayerStatsExist(playerName);
 
       // Remove player on disconnect
       db.ref(`rooms/${currentRoomCode}/players/${playerId}`).onDisconnect().remove();
@@ -222,7 +259,6 @@
         
         if (!players) return;
 
-        // Check host assignment
         if (players[playerId]) {
           isHost = !!players[playerId].isHost;
         }
@@ -239,13 +275,10 @@
         const players = snapshot.val() || {};
         const playerKeys = Object.keys(players);
 
-        // If only this player is left in the room
         if (playerKeys.length <= 1) {
           db.ref(`rooms/${currentRoomCode}`).remove().then(resetToSetupScreen);
         } else {
-          // Remove current player
           db.ref(`rooms/${currentRoomCode}/players/${playerId}`).remove().then(() => {
-            // Migrate Host status if this player was the host
             if (isHost) {
               const remainingKeys = playerKeys.filter(id => id !== playerId);
               if (remainingKeys.length > 0) {
@@ -264,7 +297,6 @@
       stopLiveTimer();
       stopStealthMode();
 
-      // Detach listeners
       if (currentRoomCode) {
         db.ref(`rooms/${currentRoomCode}/gameState`).off();
         db.ref(`rooms/${currentRoomCode}/duelStartTime`).off();
@@ -276,6 +308,7 @@
       gameState = "LOBBY";
 
       document.getElementById('room-container').style.display = 'none';
+      document.getElementById('profile-container').style.display = 'none';
       document.getElementById('setup-container').style.display = 'block';
     }
 
@@ -304,9 +337,117 @@
           statusHtml = `<span class="status-survived">SURVIVED (${p.survivedTime || 'WINNER'})</span>`;
         }
 
-        const displayName = isSelf ? `${p.name} (YOU)` : p.name;
-        li.innerHTML = `<span>${displayName} ${p.isHost ? '⭐' : ''}</span> ${statusHtml}`;
+        const cleanAlias = (p.name || '').trim();
+        const isCustomAlias = cleanAlias.length > 0 && !DEFAULT_ALIASES.includes(cleanAlias.toUpperCase());
+
+        const nameSpan = document.createElement('span');
+        const hostIcon = p.isHost ? '⭐ ' : '';
+        nameSpan.innerText = `${hostIcon}${cleanAlias}${isSelf ? ' (YOU)' : ''}`;
+
+        if (isCustomAlias) {
+          nameSpan.classList.add('player-clickable');
+          nameSpan.onclick = () => openProfileScreen(cleanAlias);
+        }
+
+        li.appendChild(nameSpan);
+        const statusSpan = document.createElement('span');
+        statusSpan.innerHTML = statusHtml;
+        li.appendChild(statusSpan);
+
         listEl.appendChild(li);
+      }
+    }
+
+    // --- STATS & PROFILE MANAGEMENT ---
+    function sanitizeAliasKey(alias) {
+      return alias.replace(/[.#$/[\]]/g, "_").toUpperCase();
+    }
+
+    function ensurePlayerStatsExist(alias) {
+      const cleanAlias = (alias || '').trim();
+      if (!cleanAlias || DEFAULT_ALIASES.includes(cleanAlias.toUpperCase())) return;
+
+      const aliasKey = sanitizeAliasKey(cleanAlias);
+      const statRef = db.ref(`players_stats/${aliasKey}`);
+
+      statRef.once('value', snapshot => {
+        if (!snapshot.exists()) {
+          statRef.set({
+            alias: cleanAlias,
+            duels: 0,
+            survived: 0,
+            totalTimeMs: 0,
+            maxSurvivedMs: 0
+          });
+        }
+      });
+    }
+
+    function openProfileScreen(alias) {
+      const cleanAlias = (alias || '').trim();
+      if (!cleanAlias) return;
+
+      const aliasKey = sanitizeAliasKey(cleanAlias);
+      document.getElementById('profile-alias-title').innerText = cleanAlias;
+
+      db.ref(`players_stats/${aliasKey}`).once('value', snapshot => {
+        const stats = snapshot.val() || { duels: 0, survived: 0, totalTimeMs: 0, maxSurvivedMs: 0 };
+        
+        const duels = stats.duels || 0;
+        const survived = stats.survived || 0;
+        const totalTimeMs = stats.totalTimeMs || 0;
+        const maxSurvivedMs = stats.maxSurvivedMs || 0;
+
+        const winPercentage = duels > 0 ? Math.round((survived / duels) * 100) : 0;
+        const avgTimeMs = duels > 0 ? Math.round(totalTimeMs / duels) : 0;
+
+        document.getElementById('stat-duels').innerText = duels;
+        document.getElementById('stat-survived').innerText = `${survived} (${winPercentage}%)`;
+        document.getElementById('stat-avg-time').innerText = formatTime(avgTimeMs);
+        document.getElementById('stat-max-time').innerText = formatTime(maxSurvivedMs);
+
+        document.getElementById('room-container').style.display = 'none';
+        document.getElementById('profile-container').style.display = 'block';
+      });
+    }
+
+    function closeProfileScreen() {
+      document.getElementById('profile-container').style.display = 'none';
+      document.getElementById('room-container').style.display = 'block';
+    }
+
+    function recordGameStats(players, winnerId, duelDurationMs) {
+      if (!isHost || !players) return;
+
+      for (let id in players) {
+        const p = players[id];
+        const cleanAlias = (p.name || '').trim();
+
+        if (!cleanAlias || DEFAULT_ALIASES.includes(cleanAlias.toUpperCase())) continue;
+
+        const aliasKey = sanitizeAliasKey(cleanAlias);
+        const isWinner = (id === winnerId);
+        
+        let playerSurvivalMs = duelDurationMs;
+        if (p.shotTimeMs) {
+          playerSurvivalMs = p.shotTimeMs;
+        }
+
+        db.ref(`players_stats/${aliasKey}`).transaction(current => {
+          if (!current) {
+            current = { alias: cleanAlias, duels: 0, survived: 0, totalTimeMs: 0, maxSurvivedMs: 0 };
+          }
+          current.duels = (current.duels || 0) + 1;
+          current.totalTimeMs = (current.totalTimeMs || 0) + playerSurvivalMs;
+
+          if (isWinner) {
+            current.survived = (current.survived || 0) + 1;
+            if (duelDurationMs > (current.maxSurvivedMs || 0)) {
+              current.maxSurvivedMs = duelDurationMs;
+            }
+          }
+          return current;
+        });
       }
     }
 
@@ -344,6 +485,8 @@
           });
         }
 
+        recordGameStats(players, winner ? winner.id : null, totalTimeElapsed);
+
         db.ref(`rooms/${currentRoomCode}`).update({
           gameState: 'FINISHED',
           winnerName: winner ? winner.name : 'NOBODY',
@@ -372,7 +515,7 @@
       const backBtn = document.getElementById('back-btn');
 
       if (gameState === 'COUNTDOWN') {
-        statusBox.innerHTML = "<h2 style='color:#f44336;'>GET READY!<br>DRAW IN PROGRESS...</h2>";
+        statusBox.innerHTML = "<h2 style='color:#f44336;'>GET READY!</h2>";
         actionBox.innerHTML = "";
         if (backBtn) backBtn.style.display = 'none';
       } else if (gameState === 'DUELING') {
@@ -444,6 +587,7 @@
           db.ref(`rooms/${currentRoomCode}/players/${id}`).update({
             status: 'MOVING',
             shotTime: null,
+            shotTimeMs: null,
             survivedTime: null
           });
         }
@@ -471,7 +615,6 @@
     function startStealthMode() {
       document.body.classList.add('stealth-mode');
       
-      // Show card content clearly for the first 5 seconds for ALL players (including host)
       applyStealthOpacity(false);
 
       if (stealthInitialTimer) clearTimeout(stealthInitialTimer);
@@ -481,7 +624,6 @@
         }
       }, 5000);
 
-      // Glance every 60 seconds for 5 seconds for ALL players
       if (stealthGlanceInterval) clearInterval(stealthGlanceInterval);
       stealthGlanceInterval = setInterval(() => {
         applyStealthOpacity(false);
@@ -562,14 +704,14 @@
             const timeElapsedMs = Date.now() - (duelStartTime || Date.now());
             const formattedTime = formatTime(timeElapsedMs);
 
-            // Vibration feedback on shot
             if ('vibrate' in navigator) {
               navigator.vibrate([200, 100, 200, 100, 400]);
             }
 
             db.ref(`rooms/${currentRoomCode}/players/${playerId}`).update({
               status: 'DEAD',
-              shotTime: formattedTime
+              shotTime: formattedTime,
+              shotTimeMs: timeElapsedMs
             });
 
             stopStealthMode();
