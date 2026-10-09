@@ -230,8 +230,10 @@
       document.getElementById('room-container').style.display = 'block';
       document.getElementById('display-room-code').innerText = currentRoomCode;
 
+      const playerRef = db.ref(`rooms/${currentRoomCode}/players/${playerId}`);
+
       // Register player
-      db.ref(`rooms/${currentRoomCode}/players/${playerId}`).set({
+      playerRef.set({
         name: playerName,
         status: 'MOVING',
         isHost: isHost
@@ -240,12 +242,13 @@
       // Register/initialize stats if unique alias
       ensurePlayerStatsExist(playerName);
 
-      // Remove player on disconnect
-      db.ref(`rooms/${currentRoomCode}/players/${playerId}`).onDisconnect().remove();
+      // Setup Disconnect handler based on state
+      setupOnDisconnect();
 
       // Listen for Game State
       db.ref(`rooms/${currentRoomCode}/gameState`).on('value', snapshot => {
         gameState = snapshot.val() || 'LOBBY';
+        setupOnDisconnect();
         handleGameStateChange();
       });
 
@@ -269,6 +272,24 @@
       });
     }
 
+    function setupOnDisconnect() {
+      if (!currentRoomCode || !playerId) return;
+      const playerRef = db.ref(`rooms/${currentRoomCode}/players/${playerId}`);
+
+      if (gameState === 'DUELING') {
+        const timeElapsedMs = Date.now() - (duelStartTime || Date.now());
+        const formattedTime = formatTime(timeElapsedMs);
+
+        playerRef.onDisconnect().update({
+          status: 'RUN_AWAY',
+          runAwayTime: formattedTime,
+          shotTimeMs: timeElapsedMs
+        });
+      } else {
+        playerRef.onDisconnect().remove();
+      }
+    }
+
     function leaveRoom() {
       if (!currentRoomCode) return;
 
@@ -279,19 +300,46 @@
         if (playerKeys.length <= 1) {
           db.ref(`rooms/${currentRoomCode}`).remove().then(resetToSetupScreen);
         } else {
-          db.ref(`rooms/${currentRoomCode}/players/${playerId}`).remove().then(() => {
-            if (isHost) {
-              const remainingKeys = playerKeys.filter(id => id !== playerId);
-              if (remainingKeys.length > 0) {
-                const nextHostId = remainingKeys[0];
-                db.ref(`rooms/${currentRoomCode}`).update({ hostId: nextHostId });
-                db.ref(`rooms/${currentRoomCode}/players/${nextHostId}`).update({ isHost: true });
-              }
-            }
-            resetToSetupScreen();
-          });
+          const playerRef = db.ref(`rooms/${currentRoomCode}/players/${playerId}`);
+
+          if (gameState === 'DUELING') {
+            // Player runs away during an ongoing duel
+            const timeElapsedMs = Date.now() - (duelStartTime || Date.now());
+            const formattedTime = formatTime(timeElapsedMs);
+
+            playerRef.update({
+              status: 'RUN_AWAY',
+              runAwayTime: formattedTime,
+              shotTimeMs: timeElapsedMs
+            }).then(() => {
+              handleHostMigrationOnExit(playerKeys);
+              resetToSetupScreen();
+            });
+          } else {
+            // Player leaves in Lobby or Finished state: Show RUN AWAY briefly (5s) for others, then remove
+            playerRef.update({
+              status: 'RUN_AWAY'
+            }).then(() => {
+              handleHostMigrationOnExit(playerKeys);
+              setTimeout(() => {
+                db.ref(`rooms/${currentRoomCode}/players/${playerId}`).remove();
+              }, 5000);
+              resetToSetupScreen();
+            });
+          }
         }
       });
+    }
+
+    function handleHostMigrationOnExit(playerKeys) {
+      if (isHost) {
+        const remainingKeys = playerKeys.filter(id => id !== playerId);
+        if (remainingKeys.length > 0) {
+          const nextHostId = remainingKeys[0];
+          db.ref(`rooms/${currentRoomCode}`).update({ hostId: nextHostId });
+          db.ref(`rooms/${currentRoomCode}/players/${nextHostId}`).update({ isHost: true });
+        }
+      }
     }
 
     function resetToSetupScreen() {
@@ -336,6 +384,9 @@
           statusHtml = `<span class="status-dead">SHOT (${p.shotTime || '0s'})</span>`;
         } else if (p.status === 'SURVIVED') {
           statusHtml = `<span class="status-survived">SURVIVED (${p.survivedTime || 'WINNER'})</span>`;
+        } else if (p.status === 'RUN_AWAY') {
+          const timeText = p.runAwayTime ? ` (${p.runAwayTime})` : '';
+          statusHtml = `<span class="status-run-away">RUN AWAY${timeText}</span>`;
         }
 
         const cleanAlias = (p.name || '').trim();
@@ -464,7 +515,7 @@
       for (let id in players) {
         totalPlayers++;
         if (players[id].status === 'READY') readyCount++;
-        if (players[id].status !== 'DEAD') {
+        if (players[id].status !== 'DEAD' && players[id].status !== 'RUN_AWAY') {
           alivePlayers.push({ id: id, ...players[id] });
         }
       }
@@ -588,12 +639,17 @@
       db.ref(`rooms/${currentRoomCode}/players`).once('value', snapshot => {
         const players = snapshot.val();
         for (let id in players) {
-          db.ref(`rooms/${currentRoomCode}/players/${id}`).update({
-            status: 'MOVING',
-            shotTime: null,
-            shotTimeMs: null,
-            survivedTime: null
-          });
+          if (players[id].status === 'RUN_AWAY') {
+            db.ref(`rooms/${currentRoomCode}/players/${id}`).remove();
+          } else {
+            db.ref(`rooms/${currentRoomCode}/players/${id}`).update({
+              status: 'MOVING',
+              shotTime: null,
+              shotTimeMs: null,
+              runAwayTime: null,
+              survivedTime: null
+            });
+          }
         }
       });
     }
@@ -704,7 +760,7 @@
       if (gameState === 'DUELING') {
         db.ref(`rooms/${currentRoomCode}/players/${playerId}`).once('value', snapshot => {
           const currentStatus = snapshot.val()?.status;
-          if (currentStatus !== 'DEAD' && currentStatus !== 'SURVIVED') {
+          if (currentStatus !== 'DEAD' && currentStatus !== 'SURVIVED' && currentStatus !== 'RUN_AWAY') {
             const timeElapsedMs = Date.now() - (duelStartTime || Date.now());
             const formattedTime = formatTime(timeElapsedMs);
 
