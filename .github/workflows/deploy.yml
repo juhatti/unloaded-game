@@ -26,12 +26,14 @@ jobs:
 
       - name: Inject Git Commit Hash into HTML
         run: |
-          # Retrieves the exact short commit hash (e.g. 1a2b3c4)
           COMMIT_HASH=$(git rev-parse --short HEAD)
-          echo "Injecting Git Commit Hash: $COMMIT_HASH"
+          echo "Injecting Commit Hash: $COMMIT_HASH"
           
-          # Replaces the 'v1.0.0-dev' placeholder with the commit hash
-          sed -i "s/v1.0.0-dev/$COMMIT_HASH/g" index.html
+          # Replaces any text inside the app-version div tag with the short commit hash
+          sed -i -E "s/(<div id=\"app-version\" class=\"version-tag\">)[^<]*(<\/div>)/\1$COMMIT_HASH\2/g" index.html
+          
+          # Output the updated line to the build logs for verification
+          grep 'id="app-version"' index.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
