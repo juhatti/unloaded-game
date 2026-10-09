@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UNLOADED - Wild West Phone Duel</title>
+  <!-- Pixel Art Google Font -->
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      background-color: #1a0f0a;
+      color: #f4c430;
+      font-family: 'Press Start 2P', monospace;
+      text-align: center;
+      padding: 20px;
+      margin: 0;
+    }
+    h1 {
+      font-size: 28px;
+      margin-bottom: 5px;
+      text-shadow: 3px 3px #000;
+    }
+    .subtitle {
+      font-size: 10px;
+      color: #a87d4f;
+      margin-bottom: 25px;
+    }
+    .card {
+      background: #2b170e;
+      border: 4px solid #8b4513;
+      padding: 20px;
+      max-width: 400px;
+      margin: 0 auto;
+      box-shadow: 0 8px 0 #000;
+    }
+    button {
+      background: #8b4513;
+      color: #fff;
+      border: 2px solid #f4c430;
+      padding: 14px;
+      font-family: 'Press Start 2P', monospace;
+      font-size: 10px;
+      cursor: pointer;
+      margin: 10px 0;
+      width: 100%;
+    }
+    button:active {
+      transform: translateY(2px);
+    }
+    input {
+      width: 100%;
+      padding: 12px;
+      margin: 10px 0;
+      background: #000;
+      color: #fff;
+      border: 2px solid #8b4513;
+      font-family: 'Press Start 2P', monospace;
+      font-size: 10px;
+      text-align: center;
+    }
+    .player-list {
+      list-style: none;
+      padding: 0;
+      margin: 15px 0;
+      text-align: left;
+    }
+    .player-item {
+      padding: 10px;
+      margin: 6px 0;
+      background: #1a0f0a;
+      border: 1px solid #8b4513;
+      font-size: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .status-ready { color: #4caf50; }
+    .status-moving { color: #f44336; }
+    .status-box {
+      margin-top: 20px;
+      font-size: 10px;
+      line-height: 1.6;
+      color: #d7ccc8;
+    }
+    .room-code {
+      color: #fff;
+      background: #000;
+      padding: 4px 8px;
+      border: 1px dashed #f4c430;
+    }
+  </style>
+
+  <!-- Google Firebase Web SDK (v9 Compat) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+</head>
+<body>
+
+  <h1>UNLOADED</h1>
+  <div class="subtitle">Wild West Digital Detox Duel</div>
+
+  <!-- SETUP SCREEN -->
+  <div id="setup-screen" class="card">
+    <input type="text" id="player-name" placeholder="ENTER ALIAS..." maxlength="12">
+    <button onclick="createRoom()">CREATE SALOON (HOST)</button>
+    <hr style="border-color: #8b4513; margin: 15px 0;">
+    <input type="text" id="room-code-input" placeholder="ROOM CODE (E.G. A1B2)" style="text-transform: uppercase;">
+    <button onclick="joinRoom()">JOIN DUEL</button>
+  </div>
+
+  <!-- LOBBY SCREEN -->
+  <div id="room-screen" class="card" style="display:none;">
+    <div style="font-size: 12px; margin-bottom: 15px;">
+      SALOON CODE: <span id="display-room-code" class="room-code">-</span>
+    </div>
+
+    <button id="perm-btn" onclick="requestMotionPermission()">ENABLE MOTION SENSOR</button>
+    
+    <p id="sensor-instruction" style="font-size: 8px; line-height: 1.5; color: #a87d4f; margin: 15px 0;">
+      Place your phone face down on the table once motion is enabled!
+    </p>
+
+    <div style="font-size: 10px; margin-top: 15px; text-align: left;">GUNSLINGERS:</div>
+    <ul id="player-list" class="player-list"></ul>
+
+    <div id="status-box" class="status-box"></div>
+  </div>
+
+  <script>
+    // --- 1. FIREBASE CONFIGURATION ---
+    const firebaseConfig = {
+      apiKey: "AIzaSyDYwJwLOhuOqfubY1GnHDRHyiPbhscPPWQ",
+      authDomain: "unloaded-a385d.firebaseapp.com",
+      databaseURL: "https://unloaded-a385d-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "unloaded-a385d",
+      storageBucket: "unloaded-a385d.firebasestorage.app",
+      messagingSenderId: "780910315970",
+      appId: "1:780910315970:web:dc8a13f0a60ba51e492e5b",
+      measurementId: "G-QSL2XQTQ0Y"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // --- GAME STATE VARIABLES ---
+    let currentRoomCode = null;
+    let playerId = "player_" + Math.random().toString(36).substring(2, 9);
+    let playerName = "";
+    let isHost = false;
+
+    let stillTimer = null;
+    let isStill = false;
+    const STILLNESS_THRESHOLD = 0.5; // Sensitivity threshold for motion
+    let lastAccel = { x: 0, y: 0, z: 0 };
+
+    // --- ROOM MANAGEMENT ---
+    function createRoom() {
+      playerName = document.getElementById('player-name').value.trim() || "Sheriff";
+      currentRoomCode = Math.random().toString(36).substring(2, 6).toUpperCase();
+      isHost = true;
+
+      db.ref('rooms/' + currentRoomCode).set({
+        createdAt: Date.now(),
+        status: 'WAITING',
+        hostId: playerId
+      }).then(() => {
+        enterRoom();
+      });
+    }
+
+    function joinRoom() {
+      playerName = document.getElementById('player-name').value.trim() || "Outlaw";
+      currentRoomCode = document.getElementById('room-code-input').value.trim().toUpperCase();
+
+      if (!currentRoomCode) return alert("Please enter a room code!");
+
+      db.ref('rooms/' + currentRoomCode).once('value', snapshot => {
+        if (snapshot.exists()) {
+          enterRoom();
+        } else {
+          alert("Saloon not found!");
+        }
+      });
+    }
+
+    function enterRoom() {
+      document.getElementById('setup-screen').style.display = 'none';
+      document.getElementById('room-screen').style.display = 'block';
+      document.getElementById('display-room-code').innerText = currentRoomCode;
+
+      // Register player in the database
+      db.ref(`rooms/${currentRoomCode}/players/${playerId}`).set({
+        name: playerName,
+        status: 'MOVING',
+        isHost: isHost
+      });
+
+      // Remove player on disconnect
+      db.ref(`rooms/${currentRoomCode}/players/${playerId}`).onDisconnect().remove();
+
+      // Listen for player updates
+      db.ref(`rooms/${currentRoomCode}/players`).on('value', snapshot => {
+        updatePlayerList(snapshot.val());
+      });
+    }
+
+    function updatePlayerList(players) {
+      const listEl = document.getElementById('player-list');
+      listEl.innerHTML = '';
+
+      let allReady = true;
+      let count = 0;
+
+      for (let id in players) {
+        count++;
+        const p = players[id];
+        const li = document.createElement('li');
+        li.className = 'player-item';
+
+        const readyStatus = p.status === 'READY' 
+          ? '<span class="status-ready">STILL (5s)</span>' 
+          : '<span class="status-moving">MOVING</span>';
+
+        li.innerHTML = `<span>${p.name} ${p.isHost ? '⭐' : ''}</span> ${readyStatus}`;
+        listEl.appendChild(li);
+
+        if (p.status !== 'READY') allReady = false;
+      }
+
+      const statusBox = document.getElementById('status-box');
+      if (count > 1 && allReady) {
+        statusBox.innerHTML = "<h2 style='color:#4caf50;'>DUEL STARTING!<br>3... 2... 1...</h2>";
+      } else {
+        statusBox.innerHTML = "<p>Waiting for everyone to keep their phone still for 5s...</p>";
+      }
+    }
+
+    // --- MOTION DETECTION (DeviceMotion API) ---
+    function requestMotionPermission() {
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        // iOS 13+ Permission request
+        DeviceMotionEvent.requestPermission()
+          .then(response => {
+            if (response === 'granted') {
+              startMotionDetection();
+            } else {
+              alert("Motion permission is required to play!");
+            }
+          })
+          .catch(console.error);
+      } else {
+        // Android and non-iOS browsers
+        startMotionDetection();
+      }
+    }
+
+    function startMotionDetection() {
+      document.getElementById('perm-btn').style.display = 'none';
+      window.addEventListener('devicemotion', handleMotion);
+      resetStillness();
+    }
+
+    function handleMotion(event) {
+      const accel = event.accelerationIncludingGravity;
+      if (!accel) return;
+
+      const deltaX = Math.abs(accel.x - lastAccel.x);
+      const deltaY = Math.abs(accel.y - lastAccel.y);
+      const deltaZ = Math.abs(accel.z - lastAccel.z);
+
+      lastAccel = { x: accel.x, y: accel.y, z: accel.z };
+
+      // Trigger movement if delta exceeds threshold
+      if (deltaX > STILLNESS_THRESHOLD || deltaY > STILLNESS_THRESHOLD || deltaZ > STILLNESS_THRESHOLD) {
+        resetStillness();
+      }
+    }
+
+    function resetStillness() {
+      if (isStill) {
+        isStill = false;
+        db.ref(`rooms/${currentRoomCode}/players/${playerId}/status`).set('MOVING');
+      }
+
+      clearTimeout(stillTimer);
+
+      // Start 5 second stillness timer
+      stillTimer = setTimeout(() => {
+        isStill = true;
+        db.ref(`rooms/${currentRoomCode}/players/${playerId}/status`).set('READY');
+      }, 5000);
+    }
+  </script>
+</body>
+</html>
