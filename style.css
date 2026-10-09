@@ -74,12 +74,6 @@ button:active {
   font-size: 8px;
 }
 
-.btn-danger {
-  background: #3a0000;
-  border-color: #f44336;
-  color: #f44336;
-}
-
 input {
   width: 100%;
   padding: 12px;

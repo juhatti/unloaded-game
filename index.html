@@ -62,7 +62,7 @@
       <div id="status-box" class="status-box"></div>
       <div id="action-box"></div>
       
-      <button id="back-btn" class="btn-secondary btn-danger" style="margin-top: 15px;" onclick="leaveRoom()">BACK TO MENU</button>
+      <button id="back-btn" class="btn-secondary" style="margin-top: 15px;" onclick="leaveRoom()">BACK TO MENU</button>
     </div>
 
     <!-- Message Banner (Outside & Below Room Screen) -->
@@ -471,28 +471,26 @@
     function startStealthMode() {
       document.body.classList.add('stealth-mode');
       
-      if (!isHost) {
-        // Show list clearly for the first 5 seconds
-        applyStealthOpacity(false);
+      // Show card content clearly for the first 5 seconds for ALL players (including host)
+      applyStealthOpacity(false);
 
-        if (stealthInitialTimer) clearTimeout(stealthInitialTimer);
-        stealthInitialTimer = setTimeout(() => {
+      if (stealthInitialTimer) clearTimeout(stealthInitialTimer);
+      stealthInitialTimer = setTimeout(() => {
+        if (gameState === 'DUELING') {
+          applyStealthOpacity(true);
+        }
+      }, 5000);
+
+      // Glance every 60 seconds for 5 seconds for ALL players
+      if (stealthGlanceInterval) clearInterval(stealthGlanceInterval);
+      stealthGlanceInterval = setInterval(() => {
+        applyStealthOpacity(false);
+        setTimeout(() => {
           if (gameState === 'DUELING') {
             applyStealthOpacity(true);
           }
         }, 5000);
-
-        // Glance every 60 seconds for 5 seconds
-        if (stealthGlanceInterval) clearInterval(stealthGlanceInterval);
-        stealthGlanceInterval = setInterval(() => {
-          applyStealthOpacity(false);
-          setTimeout(() => {
-            if (gameState === 'DUELING') {
-              applyStealthOpacity(true);
-            }
-          }, 5000);
-        }, 60000);
-      }
+      }, 60000);
     }
 
     function stopStealthMode() {
