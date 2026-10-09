@@ -137,6 +137,11 @@ input {
   font-weight: bold; 
 }
 
+.status-survived {
+  color: #ffd700;
+  font-weight: bold;
+}
+
 .status-box {
   margin-top: 20px;
   font-size: 11px;

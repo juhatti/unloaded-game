@@ -117,7 +117,7 @@
 
       setTimeout(() => {
         msgEl.style.display = 'none';
-      }, 5000);
+      }, 6000);
     }
 
     // --- FULLSCREEN & DEVICE DETECTION ---
@@ -127,8 +127,9 @@
 
     function toggleFullscreen() {
       if (isIPhone()) {
-        const activeScreen = document.getElementById('setup-container').style.display !== 'none' ? 'setup' : 'room';
-        showMessage("Tap Safari's Share icon and select 'Add to Home Screen' for fullscreen mode!", activeScreen);
+        const isSetupVisible = document.getElementById('setup-container').style.display !== 'none';
+        const target = isSetupVisible ? 'setup' : 'room';
+        showMessage("On iPhone, tap your browser's Share icon and select 'Add to Home Screen' for fullscreen mode!", target);
         return;
       }
 
@@ -241,7 +242,9 @@
         } else if (p.status === 'MOVING') {
           statusHtml = '<span class="status-moving">MOVING</span>';
         } else if (p.status === 'DEAD') {
-          statusHtml = `<span class="status-dead">SHOT (${p.shotTime})</span>`;
+          statusHtml = `<span class="status-dead">SHOT (${p.shotTime || '0s'})</span>`;
+        } else if (p.status === 'SURVIVED') {
+          statusHtml = `<span class="status-survived">SURVIVED (${p.survivedTime || 'WINNER'})</span>`;
         }
 
         const displayName = isSelf ? `${p.name} (YOU)` : p.name;
@@ -276,6 +279,14 @@
         const winner = alivePlayers.length === 1 ? alivePlayers[0] : null;
         const totalTimeElapsed = Date.now() - (duelStartTime || Date.now());
         const formattedTotalTime = formatTime(totalTimeElapsed);
+
+        // Update Winner status directly on player record
+        if (winner) {
+          db.ref(`rooms/${currentRoomCode}/players/${winner.id}`).update({
+            status: 'SURVIVED',
+            survivedTime: formattedTotalTime
+          });
+        }
 
         db.ref(`rooms/${currentRoomCode}`).update({
           gameState: 'FINISHED',
@@ -366,7 +377,8 @@
         for (let id in players) {
           db.ref(`rooms/${currentRoomCode}/players/${id}`).update({
             status: 'MOVING',
-            shotTime: null
+            shotTime: null,
+            survivedTime: null
           });
         }
       });
@@ -473,7 +485,7 @@
       if (gameState === 'DUELING') {
         db.ref(`rooms/${currentRoomCode}/players/${playerId}`).once('value', snapshot => {
           const currentStatus = snapshot.val()?.status;
-          if (currentStatus !== 'DEAD') {
+          if (currentStatus !== 'DEAD' && currentStatus !== 'SURVIVED') {
             const timeElapsedMs = Date.now() - (duelStartTime || Date.now());
             const formattedTime = formatTime(timeElapsedMs);
 
@@ -496,6 +508,8 @@
     }
 
     function resetStillness() {
+      if (gameState !== 'LOBBY') return;
+
       if (isStill) {
         isStill = false;
         db.ref(`rooms/${currentRoomCode}/players/${playerId}/status`).set('MOVING');
