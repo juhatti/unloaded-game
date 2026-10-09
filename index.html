@@ -34,7 +34,6 @@
       <hr style="border-color: #8b4513; margin: 15px 0;">
       <input type="text" id="room-code-input" placeholder="ROOM CODE (E.G. A1B2)" style="text-transform: uppercase;">
       <button onclick="joinRoom()">JOIN DUEL</button>
-      <button class="btn-secondary" onclick="toggleFullscreen()">FULLSCREEN</button>
     </div>
 
     <!-- Message Banner (Outside & Below Setup Screen) -->
@@ -62,6 +61,8 @@
 
       <div id="status-box" class="status-box"></div>
       <div id="action-box"></div>
+      
+      <button id="back-btn" class="btn-secondary btn-danger" style="margin-top: 15px;" onclick="leaveRoom()">BACK TO MENU</button>
     </div>
 
     <!-- Message Banner (Outside & Below Room Screen) -->
@@ -103,6 +104,7 @@
     let liveTimerInterval = null;
 
     let stealthGlanceInterval = null;
+    let stealthInitialTimer = null;
 
     // --- INLINE MESSAGE / NOTIFICATION SYSTEM ---
     function showMessage(text, targetScreen = 'setup') {
@@ -217,9 +219,64 @@
       // Listen for Player updates
       db.ref(`rooms/${currentRoomCode}/players`).on('value', snapshot => {
         const players = snapshot.val();
+        
+        if (!players) return;
+
+        // Check host assignment
+        if (players[playerId]) {
+          isHost = !!players[playerId].isHost;
+        }
+
         updatePlayerList(players);
         checkGameStateLogic(players);
       });
+    }
+
+    function leaveRoom() {
+      if (!currentRoomCode) return;
+
+      db.ref(`rooms/${currentRoomCode}/players`).once('value', snapshot => {
+        const players = snapshot.val() || {};
+        const playerKeys = Object.keys(players);
+
+        // If only this player is left in the room
+        if (playerKeys.length <= 1) {
+          db.ref(`rooms/${currentRoomCode}`).remove().then(resetToSetupScreen);
+        } else {
+          // Remove current player
+          db.ref(`rooms/${currentRoomCode}/players/${playerId}`).remove().then(() => {
+            // Migrate Host status if this player was the host
+            if (isHost) {
+              const remainingKeys = playerKeys.filter(id => id !== playerId);
+              if (remainingKeys.length > 0) {
+                const nextHostId = remainingKeys[0];
+                db.ref(`rooms/${currentRoomCode}`).update({ hostId: nextHostId });
+                db.ref(`rooms/${currentRoomCode}/players/${nextHostId}`).update({ isHost: true });
+              }
+            }
+            resetToSetupScreen();
+          });
+        }
+      });
+    }
+
+    function resetToSetupScreen() {
+      stopLiveTimer();
+      stopStealthMode();
+
+      // Detach listeners
+      if (currentRoomCode) {
+        db.ref(`rooms/${currentRoomCode}/gameState`).off();
+        db.ref(`rooms/${currentRoomCode}/duelStartTime`).off();
+        db.ref(`rooms/${currentRoomCode}/players`).off();
+      }
+
+      currentRoomCode = null;
+      isHost = false;
+      gameState = "LOBBY";
+
+      document.getElementById('room-container').style.display = 'none';
+      document.getElementById('setup-container').style.display = 'block';
     }
 
     function updatePlayerList(players) {
@@ -280,7 +337,6 @@
         const totalTimeElapsed = Date.now() - (duelStartTime || Date.now());
         const formattedTotalTime = formatTime(totalTimeElapsed);
 
-        // Update Winner status directly on player record
         if (winner) {
           db.ref(`rooms/${currentRoomCode}/players/${winner.id}`).update({
             status: 'SURVIVED',
@@ -313,10 +369,12 @@
     function renderStatusBox() {
       const statusBox = document.getElementById('status-box');
       const actionBox = document.getElementById('action-box');
+      const backBtn = document.getElementById('back-btn');
 
       if (gameState === 'COUNTDOWN') {
         statusBox.innerHTML = "<h2 style='color:#f44336;'>GET READY!<br>DRAW IN PROGRESS...</h2>";
         actionBox.innerHTML = "";
+        if (backBtn) backBtn.style.display = 'none';
       } else if (gameState === 'DUELING') {
         statusBox.innerHTML = `
           <div id="live-timer-display" class="live-timer">00:00</div>
@@ -324,7 +382,10 @@
           <p style="font-size:8px;">Don't touch your phone!</p>
         `;
         actionBox.innerHTML = "";
+        if (backBtn) backBtn.style.display = 'none';
       } else if (gameState === 'FINISHED') {
+        if (backBtn) backBtn.style.display = 'block';
+
         db.ref(`rooms/${currentRoomCode}`).once('value', snapshot => {
           const data = snapshot.val();
           const winnerName = data?.winnerName || 'NOBODY';
@@ -339,9 +400,14 @@
             </div>
           `;
 
-          actionBox.innerHTML = `<button onclick="resetToLobby()">NEXT ROUND</button>`;
+          if (isHost) {
+            actionBox.innerHTML = `<button onclick="resetToLobby()">NEXT ROUND</button>`;
+          } else {
+            actionBox.innerHTML = "<p style='font-size:8px; color:#a87d4f;'>Waiting for host to start next round...</p>";
+          }
         });
       } else if (gameState === 'LOBBY') {
+        if (backBtn) backBtn.style.display = 'block';
         statusBox.innerHTML = "<p>Waiting for everyone to keep their phone still for 5s...</p>";
         actionBox.innerHTML = "";
       }
@@ -405,10 +471,18 @@
     function startStealthMode() {
       document.body.classList.add('stealth-mode');
       
-      // Non-host players hide UI elements during duel
       if (!isHost) {
-        applyStealthOpacity(true);
+        // Show list clearly for the first 5 seconds
+        applyStealthOpacity(false);
 
+        if (stealthInitialTimer) clearTimeout(stealthInitialTimer);
+        stealthInitialTimer = setTimeout(() => {
+          if (gameState === 'DUELING') {
+            applyStealthOpacity(true);
+          }
+        }, 5000);
+
+        // Glance every 60 seconds for 5 seconds
         if (stealthGlanceInterval) clearInterval(stealthGlanceInterval);
         stealthGlanceInterval = setInterval(() => {
           applyStealthOpacity(false);
@@ -424,6 +498,7 @@
     function stopStealthMode() {
       document.body.classList.remove('stealth-mode');
       applyStealthOpacity(false);
+      if (stealthInitialTimer) clearTimeout(stealthInitialTimer);
       if (stealthGlanceInterval) clearInterval(stealthGlanceInterval);
     }
 
