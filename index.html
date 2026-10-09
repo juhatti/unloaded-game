@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>UNLOADED - Wild West Phone Duel</title>
+  <title>UNLOADED</title>
   <!-- Pixel Art Google Font -->
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
   <style>
@@ -17,16 +17,15 @@
       text-align: center;
       padding: 20px;
       margin: 0;
+      transition: background-color 0.5s ease;
+    }
+    body.stealth-mode {
+      background-color: #000000 !important;
     }
     h1 {
       font-size: 28px;
-      margin-bottom: 5px;
-      text-shadow: 3px 3px #000;
-    }
-    .subtitle {
-      font-size: 10px;
-      color: #a87d4f;
       margin-bottom: 25px;
+      text-shadow: 3px 3px #000;
     }
     .card {
       background: #2b170e;
@@ -35,6 +34,16 @@
       max-width: 400px;
       margin: 0 auto;
       box-shadow: 0 8px 0 #000;
+      transition: opacity 0.5s ease;
+    }
+    .stealth-mode .card {
+      background: #000000;
+      border-color: #111111;
+      box-shadow: none;
+    }
+    .stealth-hidden {
+      opacity: 0.05;
+      pointer-events: none;
     }
     button {
       background: #8b4513;
@@ -78,10 +87,14 @@
       align-items: center;
       line-height: 1.4;
     }
+    .player-self {
+      color: #ffffff !important;
+      font-weight: bold;
+      border-color: #f4c430;
+    }
     .status-ready { color: #4caf50; }
     .status-moving { color: #ff9800; }
     .status-dead { color: #f44336; font-weight: bold; }
-    .status-survived { color: #2196f3; }
     .status-box {
       margin-top: 20px;
       font-size: 11px;
@@ -94,16 +107,20 @@
       padding: 4px 8px;
       border: 1px dashed #f4c430;
     }
-    .countdown-display {
-      font-size: 24px;
-      color: #e53935;
-      margin: 15px 0;
-      animation: pulse 1s infinite;
+    .live-timer {
+      font-size: 20px;
+      color: #4caf50;
+      margin: 10px 0;
+      text-shadow: 2px 2px #000;
     }
-    @keyframes pulse {
-      0% { transform: scale(1); }
-      50% { transform: scale(1.1); }
-      100% { transform: scale(1); }
+    .winner-box {
+      color: #ffd700;
+      font-size: 12px;
+      line-height: 1.8;
+      border: 2px dashed #ffd700;
+      padding: 15px;
+      margin-top: 15px;
+      background: #110d00;
     }
   </style>
 
@@ -114,7 +131,6 @@
 <body>
 
   <h1>UNLOADED</h1>
-  <div class="subtitle">Wild West Digital Detox Duel</div>
 
   <!-- SETUP SCREEN -->
   <div id="setup-screen" class="card">
@@ -141,6 +157,7 @@
     <ul id="player-list" class="player-list"></ul>
 
     <div id="status-box" class="status-box"></div>
+    <div id="action-box"></div>
   </div>
 
   <script>
@@ -167,15 +184,20 @@
 
     let stillTimer = null;
     let isStill = false;
-    const STILLNESS_THRESHOLD = 0.6; // Sensitivity threshold for motion
+    const STILLNESS_THRESHOLD = 2.0; // Increased threshold to withstand table bumps
+    let motionSpikeCount = 0; // Anti-shake spike counter
     let lastAccel = { x: 0, y: 0, z: 0 };
 
     let wakeLock = null;
-    let gameState = "LOBBY"; // LOBBY, COUNTDOWN, DUELING
+    let gameState = "LOBBY"; // LOBBY, COUNTDOWN, DUELING, FINISHED
     let countdownTimer = null;
     let duelStartTime = null;
+    let liveTimerInterval = null;
 
-    // --- KEEP SCREEN AWAKE (Wake Lock API) ---
+    let stealthGlanceInterval = null;
+    let isGlancing = false;
+
+    // --- KEEP SCREEN AWAKE ---
     async function requestWakeLock() {
       try {
         if ('wakeLock' in navigator) {
@@ -231,9 +253,10 @@
       // Remove player on disconnect
       db.ref(`rooms/${currentRoomCode}/players/${playerId}`).onDisconnect().remove();
 
-      // Listen for Room State updates
+      // Listen for Game State
       db.ref(`rooms/${currentRoomCode}/gameState`).on('value', snapshot => {
         gameState = snapshot.val() || 'LOBBY';
+        handleGameStateChange();
       });
 
       // Listen for Duel Start Time
@@ -258,6 +281,11 @@
         const li = document.createElement('li');
         li.className = 'player-item';
 
+        const isSelf = (id === playerId);
+        if (isSelf) {
+          li.classList.add('player-self');
+        }
+
         let statusHtml = '';
         if (p.status === 'READY') {
           statusHtml = '<span class="status-ready">STILL (5s)</span>';
@@ -267,33 +295,99 @@
           statusHtml = `<span class="status-dead">SHOT (${p.shotTime})</span>`;
         }
 
-        li.innerHTML = `<span>${p.name} ${p.isHost ? '⭐' : ''}</span> ${statusHtml}`;
+        const displayName = isSelf ? `${p.name} (YOU)` : p.name;
+        li.innerHTML = `<span>${displayName} ${p.isHost ? '⭐' : ''}</span> ${statusHtml}`;
         listEl.appendChild(li);
       }
     }
 
     // --- GAME LOGIC & STATE MACHINE ---
     function checkGameStateLogic(players) {
-      const statusBox = document.getElementById('status-box');
-      let count = 0;
+      if (!players) return;
+
+      let totalPlayers = 0;
       let readyCount = 0;
+      let alivePlayers = [];
 
       for (let id in players) {
-        count++;
+        totalPlayers++;
         if (players[id].status === 'READY') readyCount++;
+        if (players[id].status !== 'DEAD') {
+          alivePlayers.push({ id: id, ...players[id] });
+        }
       }
 
-      // Host triggers Countdown if everyone is ready in LOBBY state
-      if (isHost && gameState === 'LOBBY' && count > 1 && readyCount === count) {
+      // 1. Host triggers Countdown if everyone is ready in LOBBY state
+      if (isHost && gameState === 'LOBBY' && totalPlayers > 1 && readyCount === totalPlayers) {
         startCountdown();
       }
 
+      // 2. Check for Winner in DUELING state
+      if (isHost && gameState === 'DUELING' && totalPlayers > 1 && alivePlayers.length <= 1) {
+        const winner = alivePlayers.length === 1 ? alivePlayers[0] : null;
+        const totalTimeElapsed = Date.now() - (duelStartTime || Date.now());
+        const formattedTotalTime = formatTime(totalTimeElapsed);
+
+        db.ref(`rooms/${currentRoomCode}`).update({
+          gameState: 'FINISHED',
+          winnerName: winner ? winner.name : 'NOBODY',
+          survivedTime: formattedTotalTime
+        });
+      }
+
+      renderStatusBox();
+    }
+
+    function handleGameStateChange() {
+      const cardEl = document.getElementById('room-screen');
+
+      if (gameState === 'DUELING') {
+        startLiveTimer();
+        if (!isHost) {
+          startStealthMode();
+        }
+      } else {
+        stopLiveTimer();
+        stopStealthMode();
+      }
+
+      renderStatusBox();
+    }
+
+    function renderStatusBox() {
+      const statusBox = document.getElementById('status-box');
+      const actionBox = document.getElementById('action-box');
+
       if (gameState === 'COUNTDOWN') {
-        statusBox.innerHTML = "<div class='countdown-display'>GET READY!<br>DRAW IN PROGRESS...</div>";
+        statusBox.innerHTML = "<h2 style='color:#f44336;'>GET READY!<br>DRAW IN PROGRESS...</h2>";
+        actionBox.innerHTML = "";
       } else if (gameState === 'DUELING') {
-        statusBox.innerHTML = "<h3 style='color:#ff9800;'>DUEL IS LIVE!</h3><p>Don't touch your phone!</p>";
+        statusBox.innerHTML = `
+          <div id="live-timer-display" class="live-timer">00:00</div>
+          <h3 style="color:#ff9800; margin: 5px 0;">DUEL IS LIVE!</h3>
+          <p style="font-size:8px;">Don't touch your phone!</p>
+        `;
+        actionBox.innerHTML = "";
+      } else if (gameState === 'FINISHED') {
+        db.ref(`rooms/${currentRoomCode}`).once('value', snapshot => {
+          const data = snapshot.val();
+          const winnerName = data?.winnerName || 'NOBODY';
+          const survivedTime = data?.survivedTime || '0s';
+
+          statusBox.innerHTML = `
+            <div class="winner-box">
+              🏆 VICTORY 🏆<br><br>
+              <b>${winnerName}</b><br>
+              WON THE DUEL!<br><br>
+              SURVIVED: ${survivedTime}
+            </div>
+          `;
+
+          actionBox.innerHTML = `<button onclick="resetToLobby()">NEXT ROUND</button>`;
+        });
       } else if (gameState === 'LOBBY') {
         statusBox.innerHTML = "<p>Waiting for everyone to keep their phone still for 5s...</p>";
+        actionBox.innerHTML = "";
       }
     }
 
@@ -314,7 +408,77 @@
       }, 1000);
     }
 
-    // --- MOTION DETECTION (DeviceMotion API) ---
+    function resetToLobby() {
+      // Reset room state for Next Round
+      db.ref(`rooms/${currentRoomCode}`).update({
+        gameState: 'LOBBY',
+        duelStartTime: null,
+        winnerName: null,
+        survivedTime: null
+      });
+
+      // Reset all players to MOVING status
+      db.ref(`rooms/${currentRoomCode}/players`).once('value', snapshot => {
+        const players = snapshot.val();
+        for (let id in players) {
+          db.ref(`rooms/${currentRoomCode}/players/${id}`).update({
+            status: 'MOVING',
+            shotTime: null
+          });
+        }
+      });
+    }
+
+    // --- LIVE TIMER ---
+    function startLiveTimer() {
+      stopLiveTimer();
+      liveTimerInterval = setInterval(() => {
+        if (!duelStartTime) return;
+        const elapsed = Date.now() - duelStartTime;
+        const timerEl = document.getElementById('live-timer-display');
+        if (timerEl) {
+          timerEl.innerText = formatDigitalTimer(elapsed);
+        }
+      }, 1000);
+    }
+
+    function stopLiveTimer() {
+      if (liveTimerInterval) clearInterval(liveTimerInterval);
+    }
+
+    // --- STEALTH MODE FOR NON-HOST PLAYERS ---
+    function startStealthMode() {
+      document.body.classList.add('stealth-mode');
+      applyStealthOpacity(true);
+
+      // Every 60 seconds, glance for 5 seconds
+      if (stealthGlanceInterval) clearInterval(stealthGlanceInterval);
+      stealthGlanceInterval = setInterval(() => {
+        applyStealthOpacity(false); // Show list
+        setTimeout(() => {
+          if (gameState === 'DUELING') {
+            applyStealthOpacity(true); // Hide again
+          }
+        }, 5000);
+      }, 60000);
+    }
+
+    function stopStealthMode() {
+      document.body.classList.remove('stealth-mode');
+      applyStealthOpacity(false);
+      if (stealthGlanceInterval) clearInterval(stealthGlanceInterval);
+    }
+
+    function applyStealthOpacity(hide) {
+      const card = document.getElementById('room-screen');
+      if (hide) {
+        card.classList.add('stealth-hidden');
+      } else {
+        card.classList.remove('stealth-hidden');
+      }
+    }
+
+    // --- MOTION DETECTION ---
     function requestMotionPermission() {
       requestWakeLock();
 
@@ -349,15 +513,23 @@
 
       lastAccel = { x: accel.x, y: accel.y, z: accel.z };
 
-      // Trigger movement if delta exceeds threshold
+      // Check if movement exceeds the threshold
       if (deltaX > STILLNESS_THRESHOLD || deltaY > STILLNESS_THRESHOLD || deltaZ > STILLNESS_THRESHOLD) {
-        onPhoneMoved();
+        motionSpikeCount++;
+        
+        // Trigger movement only if sustained across at least 2 consecutive checks
+        // (Prevents accidental shots from a single table bump)
+        if (motionSpikeCount >= 2) {
+          onPhoneMoved();
+        }
+      } else {
+        // Reset the spike counter when motion settles down
+        motionSpikeCount = Math.max(0, motionSpikeCount - 1);
       }
     }
 
     function onPhoneMoved() {
       if (gameState === 'DUELING') {
-        // PLAYER LOST / GOT SHOT DURING DUEL!
         db.ref(`rooms/${currentRoomCode}/players/${playerId}`).once('value', snapshot => {
           const currentStatus = snapshot.val()?.status;
           if (currentStatus !== 'DEAD') {
@@ -368,6 +540,9 @@
               status: 'DEAD',
               shotTime: formattedTime
             });
+
+            // Reveal screen once player is shot
+            stopStealthMode();
           }
         });
       } else {
@@ -383,14 +558,13 @@
 
       clearTimeout(stillTimer);
 
-      // Start 5 second stillness timer
       stillTimer = setTimeout(() => {
         isStill = true;
         db.ref(`rooms/${currentRoomCode}/players/${playerId}/status`).set('READY');
       }, 5000);
     }
 
-    // Helper function: format ms into "2 mins 42 secs" or "15 secs"
+    // --- HELPERS ---
     function formatTime(ms) {
       const totalSeconds = Math.floor(ms / 1000);
       const minutes = Math.floor(totalSeconds / 60);
@@ -400,6 +574,14 @@
         return `${minutes}m ${seconds}s`;
       }
       return `${seconds}s`;
+    }
+
+    function formatDigitalTimer(ms) {
+      const totalSeconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      const pad = num => String(num).padStart(2, '0');
+      return `${pad(minutes)}:${pad(seconds)}`;
     }
   </script>
 </body>
