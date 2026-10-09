@@ -22,17 +22,20 @@
 <body>
 
   <h1>UNLOADED</h1>
-  <!-- Git Hash Placeholder (Replaced automatically by GitHub Actions) -->
-  <div id="app-version" class="version-tag">v1.0.0-dev</div>
 
   <!-- SETUP SCREEN -->
   <div id="setup-screen" class="card">
+    <!-- Git Hash Placeholder (Visible ONLY on Setup Screen) -->
+    <div id="app-version" class="version-tag">v1.0.0-dev</div>
+
     <input type="text" id="player-name" placeholder="ENTER ALIAS..." maxlength="12">
     <button onclick="createRoom()">CREATE SALOON (HOST)</button>
     <hr style="border-color: #8b4513; margin: 15px 0;">
     <input type="text" id="room-code-input" placeholder="ROOM CODE (E.G. A1B2)" style="text-transform: uppercase;">
     <button onclick="joinRoom()">JOIN DUEL</button>
     <button class="btn-secondary" onclick="toggleFullscreen()">FULLSCREEN</button>
+
+    <div id="setup-message" class="message-banner"></div>
   </div>
 
   <!-- LOBBY & DUEL SCREEN -->
@@ -55,6 +58,8 @@
 
     <div id="status-box" class="status-box"></div>
     <div id="action-box"></div>
+
+    <div id="room-message" class="message-banner"></div>
   </div>
 
   <script>
@@ -93,6 +98,22 @@
 
     let stealthGlanceInterval = null;
 
+    // --- INLINE MESSAGE / NOTIFICATION SYSTEM ---
+    function showMessage(text, targetScreen = 'setup') {
+      const msgEl = targetScreen === 'setup' 
+        ? document.getElementById('setup-message') 
+        : document.getElementById('room-message');
+
+      if (!msgEl) return;
+
+      msgEl.innerText = text;
+      msgEl.style.display = 'block';
+
+      setTimeout(() => {
+        msgEl.style.display = 'none';
+      }, 5000);
+    }
+
     // --- FULLSCREEN & DEVICE DETECTION ---
     function isIPhone() {
       return /iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
@@ -100,7 +121,8 @@
 
     function toggleFullscreen() {
       if (isIPhone()) {
-        alert("On iPhone, tap Safari's Share icon and select 'Add to Home Screen' for standalone fullscreen mode!");
+        const activeScreen = document.getElementById('setup-screen').style.display !== 'none' ? 'setup' : 'room';
+        showMessage("Tap Safari's Share icon and select 'Add to Home Screen' for fullscreen mode!", activeScreen);
         return;
       }
 
@@ -126,7 +148,7 @@
       }
     }
 
-    // --- ROOM MANAGEMENT & CLEANUP LOGIC ---
+    // --- ROOM MANAGEMENT ---
     function createRoom() {
       playerName = document.getElementById('player-name').value.trim() || "Sheriff";
       currentRoomCode = Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -145,13 +167,16 @@
       playerName = document.getElementById('player-name').value.trim() || "Outlaw";
       currentRoomCode = document.getElementById('room-code-input').value.trim().toUpperCase();
 
-      if (!currentRoomCode) return alert("Please enter a room code!");
+      if (!currentRoomCode) {
+        showMessage("Please enter a saloon room code!", 'setup');
+        return;
+      }
 
       db.ref('rooms/' + currentRoomCode).once('value', snapshot => {
         if (snapshot.exists()) {
           enterRoom();
         } else {
-          alert("Saloon not found!");
+          showMessage("Saloon not found! Check the code.", 'setup');
         }
       });
     }
@@ -161,19 +186,17 @@
       document.getElementById('room-screen').style.display = 'block';
       document.getElementById('display-room-code').innerText = currentRoomCode;
 
-      const playerRef = db.ref(`rooms/${currentRoomCode}/players/${playerId}`);
-
       // Register player
-      playerRef.set({
+      db.ref(`rooms/${currentRoomCode}/players/${playerId}`).set({
         name: playerName,
         status: 'MOVING',
         isHost: isHost
       });
 
-      // Remove player automatically on disconnect
-      playerRef.onDisconnect().remove();
+      // Remove player on disconnect
+      db.ref(`rooms/${currentRoomCode}/players/${playerId}`).onDisconnect().remove();
 
-      // Listen for Game State updates
+      // Listen for Game State
       db.ref(`rooms/${currentRoomCode}/gameState`).on('value', snapshot => {
         gameState = snapshot.val() || 'LOBBY';
         handleGameStateChange();
@@ -184,16 +207,9 @@
         duelStartTime = snapshot.val();
       });
 
-      // Listen for Player updates and handle room cleanup
+      // Listen for Player updates
       db.ref(`rooms/${currentRoomCode}/players`).on('value', snapshot => {
         const players = snapshot.val();
-
-        // Automatic room deletion if all players leave
-        if (!players) {
-          db.ref(`rooms/${currentRoomCode}`).remove();
-          return;
-        }
-
         updatePlayerList(players);
         checkGameStateLogic(players);
       });
@@ -412,7 +428,7 @@
             if (response === 'granted') {
               startMotionDetection();
             } else {
-              alert("Motion permission is required to play!");
+              showMessage("Motion permission is required to play!", 'room');
             }
           })
           .catch(console.error);
