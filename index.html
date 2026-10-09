@@ -136,6 +136,7 @@
 
     let stealthGlanceInterval = null;
     let stealthInitialTimer = null;
+    let statsRecordedForDuel = false; // Prevents duplicate stat recording per duel
 
     const DEFAULT_ALIASES = ["SHERIFF", "OUTLAW"];
 
@@ -328,7 +329,7 @@
 
         let statusHtml = '';
         if (p.status === 'READY') {
-          statusHtml = '<span class="status-ready">STILL (5s)</span>';
+          statusHtml = '<span class="status-ready">STILL</span>';
         } else if (p.status === 'MOVING') {
           statusHtml = '<span class="status-moving">MOVING</span>';
         } else if (p.status === 'DEAD') {
@@ -417,7 +418,8 @@
     }
 
     function recordGameStats(players, winnerId, duelDurationMs) {
-      if (!isHost || !players) return;
+      if (!isHost || !players || statsRecordedForDuel) return;
+      statsRecordedForDuel = true;
 
       for (let id in players) {
         const p = players[id];
@@ -499,6 +501,7 @@
 
     function handleGameStateChange() {
       if (gameState === 'DUELING') {
+        statsRecordedForDuel = false; // Reset for new duel
         startLiveTimer();
         startStealthMode();
       } else {
@@ -574,6 +577,7 @@
     }
 
     function resetToLobby() {
+      statsRecordedForDuel = false;
       db.ref(`rooms/${currentRoomCode}`).update({
         gameState: 'LOBBY',
         duelStartTime: null,
