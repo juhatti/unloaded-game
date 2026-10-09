@@ -34,12 +34,11 @@
       max-width: 400px;
       margin: 0 auto;
       box-shadow: 0 8px 0 #000;
-      transition: opacity 0.5s ease;
+      transition: opacity 0.5s ease, background-color 0.5s ease, border-color 0.5s ease;
     }
     .stealth-mode .card {
-      background: #000000;
-      border-color: #111111;
-      box-shadow: none;
+      background: #050302;
+      border-color: #3a1d08;
     }
     .stealth-hidden {
       opacity: 0.05;
@@ -58,6 +57,13 @@
     }
     button:active {
       transform: translateY(2px);
+    }
+    .btn-secondary {
+      background: #000000;
+      border-color: #8b4513;
+      color: #a87d4f;
+      padding: 8px;
+      font-size: 8px;
     }
     input {
       width: 100%;
@@ -139,12 +145,16 @@
     <hr style="border-color: #8b4513; margin: 15px 0;">
     <input type="text" id="room-code-input" placeholder="ROOM CODE (E.G. A1B2)" style="text-transform: uppercase;">
     <button onclick="joinRoom()">JOIN DUEL</button>
+    <button class="btn-secondary" onclick="toggleFullscreen()">FULLSCREEN</button>
   </div>
 
   <!-- LOBBY & DUEL SCREEN -->
   <div id="room-screen" class="card" style="display:none;">
-    <div style="font-size: 12px; margin-bottom: 15px;">
-      SALOON CODE: <span id="display-room-code" class="room-code">-</span>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+      <div style="font-size: 10px;">
+        SALOON: <span id="display-room-code" class="room-code">-</span>
+      </div>
+      <button class="btn-secondary" style="width: auto; margin: 0;" onclick="toggleFullscreen()">FULLSCREEN</button>
     </div>
 
     <button id="perm-btn" onclick="requestMotionPermission()">ENABLE SENSOR & WAKE LOCK</button>
@@ -184,8 +194,8 @@
 
     let stillTimer = null;
     let isStill = false;
-    const STILLNESS_THRESHOLD = 2.0; // Increased threshold to withstand table bumps
-    let motionSpikeCount = 0; // Anti-shake spike counter
+    const STILLNESS_THRESHOLD = 2.0; // Tuned sensitivity
+    let motionSpikeCount = 0;
     let lastAccel = { x: 0, y: 0, z: 0 };
 
     let wakeLock = null;
@@ -195,7 +205,19 @@
     let liveTimerInterval = null;
 
     let stealthGlanceInterval = null;
-    let isGlancing = false;
+
+    // --- FULLSCREEN API ---
+    function toggleFullscreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => {
+          console.log(`Error attempting to enable fullscreen: ${err.message}`);
+        });
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        }
+      }
+    }
 
     // --- KEEP SCREEN AWAKE ---
     async function requestWakeLock() {
@@ -339,13 +361,9 @@
     }
 
     function handleGameStateChange() {
-      const cardEl = document.getElementById('room-screen');
-
       if (gameState === 'DUELING') {
         startLiveTimer();
-        if (!isHost) {
-          startStealthMode();
-        }
+        startStealthMode();
       } else {
         stopLiveTimer();
         stopStealthMode();
@@ -409,7 +427,6 @@
     }
 
     function resetToLobby() {
-      // Reset room state for Next Round
       db.ref(`rooms/${currentRoomCode}`).update({
         gameState: 'LOBBY',
         duelStartTime: null,
@@ -417,7 +434,6 @@
         survivedTime: null
       });
 
-      // Reset all players to MOVING status
       db.ref(`rooms/${currentRoomCode}/players`).once('value', snapshot => {
         const players = snapshot.val();
         for (let id in players) {
@@ -446,21 +462,24 @@
       if (liveTimerInterval) clearInterval(liveTimerInterval);
     }
 
-    // --- STEALTH MODE FOR NON-HOST PLAYERS ---
+    // --- STEALTH MODE ---
     function startStealthMode() {
       document.body.classList.add('stealth-mode');
-      applyStealthOpacity(true);
+      
+      // Non-host players hide UI elements during duel
+      if (!isHost) {
+        applyStealthOpacity(true);
 
-      // Every 60 seconds, glance for 5 seconds
-      if (stealthGlanceInterval) clearInterval(stealthGlanceInterval);
-      stealthGlanceInterval = setInterval(() => {
-        applyStealthOpacity(false); // Show list
-        setTimeout(() => {
-          if (gameState === 'DUELING') {
-            applyStealthOpacity(true); // Hide again
-          }
-        }, 5000);
-      }, 60000);
+        if (stealthGlanceInterval) clearInterval(stealthGlanceInterval);
+        stealthGlanceInterval = setInterval(() => {
+          applyStealthOpacity(false);
+          setTimeout(() => {
+            if (gameState === 'DUELING') {
+              applyStealthOpacity(true);
+            }
+          }, 5000);
+        }, 60000);
+      }
     }
 
     function stopStealthMode() {
@@ -513,17 +532,12 @@
 
       lastAccel = { x: accel.x, y: accel.y, z: accel.z };
 
-      // Check if movement exceeds the threshold
       if (deltaX > STILLNESS_THRESHOLD || deltaY > STILLNESS_THRESHOLD || deltaZ > STILLNESS_THRESHOLD) {
         motionSpikeCount++;
-        
-        // Trigger movement only if sustained across at least 2 consecutive checks
-        // (Prevents accidental shots from a single table bump)
         if (motionSpikeCount >= 2) {
           onPhoneMoved();
         }
       } else {
-        // Reset the spike counter when motion settles down
         motionSpikeCount = Math.max(0, motionSpikeCount - 1);
       }
     }
@@ -536,12 +550,16 @@
             const timeElapsedMs = Date.now() - (duelStartTime || Date.now());
             const formattedTime = formatTime(timeElapsedMs);
 
+            // VIBRATION FEEDBACK ON SHOT
+            if ('vibrate' in navigator) {
+              navigator.vibrate([200, 100, 200, 100, 400]);
+            }
+
             db.ref(`rooms/${currentRoomCode}/players/${playerId}`).update({
               status: 'DEAD',
               shotTime: formattedTime
             });
 
-            // Reveal screen once player is shot
             stopStealthMode();
           }
         });
