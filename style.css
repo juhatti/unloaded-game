@@ -26,7 +26,7 @@ h1 {
   font-size: 7px;
   color: #8b4513;
   margin-top: 5px;
-  margin-bottom: 20px;
+  margin-bottom: 15px;
   letter-spacing: 1px;
 }
 
@@ -87,11 +87,12 @@ input {
 }
 
 .message-banner {
+  max-width: 400px;
+  margin: 15px auto 0 auto;
   font-size: 8px;
   line-height: 1.5;
   color: #e53935;
-  margin-top: 15px;
-  padding: 8px;
+  padding: 10px;
   border: 1px dashed #e53935;
   background: #110000;
   display: none;

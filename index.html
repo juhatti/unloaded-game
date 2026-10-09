@@ -23,42 +23,48 @@
 
   <h1>UNLOADED</h1>
 
-  <!-- SETUP SCREEN -->
-  <div id="setup-screen" class="card">
-    <!-- Git Hash Placeholder (Visible ONLY on Setup Screen) -->
+  <!-- SETUP SCREEN CONTAINER -->
+  <div id="setup-container">
+    <!-- Git Hash Placeholder (Outside & Above Setup Screen) -->
     <div id="app-version" class="version-tag">v1.0.0-dev</div>
 
-    <input type="text" id="player-name" placeholder="ENTER ALIAS..." maxlength="12">
-    <button onclick="createRoom()">CREATE SALOON (HOST)</button>
-    <hr style="border-color: #8b4513; margin: 15px 0;">
-    <input type="text" id="room-code-input" placeholder="ROOM CODE (E.G. A1B2)" style="text-transform: uppercase;">
-    <button onclick="joinRoom()">JOIN DUEL</button>
-    <button class="btn-secondary" onclick="toggleFullscreen()">FULLSCREEN</button>
+    <div id="setup-screen" class="card">
+      <input type="text" id="player-name" placeholder="ENTER ALIAS..." maxlength="12">
+      <button onclick="createRoom()">CREATE SALOON (HOST)</button>
+      <hr style="border-color: #8b4513; margin: 15px 0;">
+      <input type="text" id="room-code-input" placeholder="ROOM CODE (E.G. A1B2)" style="text-transform: uppercase;">
+      <button onclick="joinRoom()">JOIN DUEL</button>
+      <button class="btn-secondary" onclick="toggleFullscreen()">FULLSCREEN</button>
+    </div>
 
+    <!-- Message Banner (Outside & Below Setup Screen) -->
     <div id="setup-message" class="message-banner"></div>
   </div>
 
-  <!-- LOBBY & DUEL SCREEN -->
-  <div id="room-screen" class="card" style="display:none;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-      <div style="font-size: 10px;">
-        SALOON: <span id="display-room-code" class="room-code">-</span>
+  <!-- LOBBY & DUEL SCREEN CONTAINER -->
+  <div id="room-container" style="display:none;">
+    <div id="room-screen" class="card">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <div style="font-size: 10px;">
+          SALOON: <span id="display-room-code" class="room-code">-</span>
+        </div>
+        <button class="btn-secondary" style="width: auto; margin: 0;" onclick="toggleFullscreen()">FULLSCREEN</button>
       </div>
-      <button class="btn-secondary" style="width: auto; margin: 0;" onclick="toggleFullscreen()">FULLSCREEN</button>
+
+      <button id="perm-btn" onclick="requestMotionPermission()">ENABLE SENSOR & WAKE LOCK</button>
+      
+      <p id="sensor-instruction" style="font-size: 8px; line-height: 1.5; color: #a87d4f; margin: 15px 0;">
+        Place your phone face down on the table! Keep it completely still.
+      </p>
+
+      <div style="font-size: 10px; margin-top: 15px; text-align: left;">GUNSLINGERS:</div>
+      <ul id="player-list" class="player-list"></ul>
+
+      <div id="status-box" class="status-box"></div>
+      <div id="action-box"></div>
     </div>
 
-    <button id="perm-btn" onclick="requestMotionPermission()">ENABLE SENSOR & WAKE LOCK</button>
-    
-    <p id="sensor-instruction" style="font-size: 8px; line-height: 1.5; color: #a87d4f; margin: 15px 0;">
-      Place your phone face down on the table! Keep it completely still.
-    </p>
-
-    <div style="font-size: 10px; margin-top: 15px; text-align: left;">GUNSLINGERS:</div>
-    <ul id="player-list" class="player-list"></ul>
-
-    <div id="status-box" class="status-box"></div>
-    <div id="action-box"></div>
-
+    <!-- Message Banner (Outside & Below Room Screen) -->
     <div id="room-message" class="message-banner"></div>
   </div>
 
@@ -121,7 +127,7 @@
 
     function toggleFullscreen() {
       if (isIPhone()) {
-        const activeScreen = document.getElementById('setup-screen').style.display !== 'none' ? 'setup' : 'room';
+        const activeScreen = document.getElementById('setup-container').style.display !== 'none' ? 'setup' : 'room';
         showMessage("Tap Safari's Share icon and select 'Add to Home Screen' for fullscreen mode!", activeScreen);
         return;
       }
@@ -182,8 +188,8 @@
     }
 
     function enterRoom() {
-      document.getElementById('setup-screen').style.display = 'none';
-      document.getElementById('room-screen').style.display = 'block';
+      document.getElementById('setup-container').style.display = 'none';
+      document.getElementById('room-container').style.display = 'block';
       document.getElementById('display-room-code').innerText = currentRoomCode;
 
       // Register player
