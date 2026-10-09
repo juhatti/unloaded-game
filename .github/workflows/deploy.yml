@@ -1,4 +1,4 @@
-name: Deploy Unloaded with Git Version Tag
+name: Deploy Unloaded with Git Commit Hash
 
 on:
   push:
@@ -23,17 +23,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0 # Fetches full history so all tags are retrieved
 
-      - name: Inject Git Tag / Hash into HTML
+      - name: Inject Git Commit Hash into HTML
         run: |
-          # Retrieves the latest tag or falls back to the short commit hash
-          VERSION_TAG=$(git describe --tags --always || git rev-parse --short HEAD)
-          echo "Injecting Version Tag: $VERSION_TAG"
+          # Retrieves the exact short commit hash (e.g. 1a2b3c4)
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          echo "Injecting Git Commit Hash: $COMMIT_HASH"
           
-          # Replaces the 'v1.0.0-dev' placeholder with the retrieved version tag
-          sed -i "s/v1.0.0-dev/$VERSION_TAG/g" index.html
+          # Replaces the 'v1.0.0-dev' placeholder with the commit hash
+          sed -i "s/v1.0.0-dev/$COMMIT_HASH/g" index.html
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
