@@ -1,0 +1,48 @@
+name: Deploy Unloaded with Git Version Tag
+
+on:
+  push:
+    branches:
+      - main # or 'master' depending on your repository settings
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetches full history so all tags are retrieved
+
+      - name: Inject Git Tag / Hash into HTML
+        run: |
+          # Retrieves the latest tag or falls back to the short commit hash
+          VERSION_TAG=$(git describe --tags --always || git rev-parse --short HEAD)
+          echo "Injecting Version Tag: $VERSION_TAG"
+          
+          # Replaces the 'v1.0.0-dev' placeholder with the retrieved version tag
+          sed -i "s/v1.0.0-dev/$VERSION_TAG/g" index.html
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
