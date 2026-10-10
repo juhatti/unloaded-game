@@ -274,7 +274,7 @@
         
         if (!players) return;
 
-        // Auto-migrate host if current host disappeared or ran away
+        // Auto-migrate host immediately if current host disappeared or ran away (even during duel)
         ensureHostMigration(players);
 
         if (players[playerId]) {
@@ -340,7 +340,7 @@
         }
       }
 
-      // If host is missing/ran away, assign host to first available active player
+      // If host is missing/ran away, assign host immediately to first available active player
       if (!hasActiveHost && availablePlayers.length > 0) {
         const newHostId = availablePlayers[0];
         db.ref(`rooms/${currentRoomCode}`).update({ hostId: newHostId });
@@ -364,7 +364,6 @@
             const p = snapshot.val() || {};
 
             if (gameState === 'DUELING' || gameState === 'FINISHED') {
-              // If already shot during the duel, retain SHOT status until NEXT ROUND
               if (p.status === 'DEAD') {
                 playerRef.update({
                   leftDuringGame: true,
@@ -374,7 +373,6 @@
                   resetToSetupScreen();
                 });
               } else {
-                // Departed while alive: mark as RUN_AWAY without timestamp
                 const timeElapsedMs = Date.now() - (duelStartTime || Date.now());
 
                 playerRef.update({
@@ -388,7 +386,6 @@
                 });
               }
             } else {
-              // Leaving in LOBBY: show RUN AWAY without seconds for 5s, then purge
               playerRef.update({
                 name: playerName,
                 status: 'RUN_AWAY',
@@ -447,12 +444,10 @@
         } else if (p.status === 'MOVING') {
           statusHtml = '<span class="status-moving">MOVING</span>';
         } else if (p.status === 'DEAD') {
-          // Display shot status and timestamp throughout duel + finished results
           statusHtml = `<span class="status-dead">SHOT (${p.shotTime || '0s'})</span>`;
         } else if (p.status === 'SURVIVED') {
           statusHtml = `<span class="status-survived">SURVIVED (${p.survivedTime || 'WINNER'})</span>`;
         } else if (p.status === 'RUN_AWAY') {
-          // Pure RUN AWAY without any time indicator
           statusHtml = `<span class="status-run-away">RUN AWAY</span>`;
         }
 
@@ -575,28 +570,32 @@
     function checkGameStateLogic(players) {
       if (!players) return;
 
-      let totalPlayers = 0;
+      let activePlayersCount = 0;
       let readyCount = 0;
       let alivePlayers = [];
 
       for (let id in players) {
-        totalPlayers++;
-        if (players[id].status === 'READY') readyCount++;
-        // Players who are DEAD, RUN_AWAY, or left during game are eliminated
+        // Only count active, present players (exclude RUN_AWAY and leftDuringGame)
+        if (players[id].status !== 'RUN_AWAY' && !players[id].leftDuringGame) {
+          activePlayersCount++;
+          if (players[id].status === 'READY') {
+            readyCount++;
+          }
+        }
+
         if (players[id].status !== 'DEAD' && players[id].status !== 'RUN_AWAY' && !players[id].leftDuringGame) {
           alivePlayers.push({ id: id, ...players[id] });
         }
       }
 
-      // 1. Host triggers Countdown only after pressing "START DUEL" (isDuelStarted === true)
-      if (isHost && gameState === 'LOBBY' && isDuelStarted && totalPlayers > 1 && readyCount === totalPlayers) {
-        // Clear all un-returned RUN_AWAY entries as the duel starts
+      // 1. Host triggers Countdown only if all ACTIVE players are READY
+      if (isHost && gameState === 'LOBBY' && isDuelStarted && activePlayersCount > 1 && readyCount === activePlayersCount) {
         purgeUnreturnedRunaways();
         startCountdown();
       }
 
       // 2. Check for Winner in DUELING state (Ends when <= 1 alive player remains)
-      if (isHost && gameState === 'DUELING' && totalPlayers > 1 && alivePlayers.length <= 1) {
+      if (isHost && gameState === 'DUELING' && activePlayersCount > 1 && alivePlayers.length <= 1) {
         const winner = alivePlayers.length === 1 ? alivePlayers[0] : null;
         const totalTimeElapsed = Date.now() - (duelStartTime || Date.now());
         const formattedTotalTime = formatTime(totalTimeElapsed);
@@ -742,7 +741,6 @@
       db.ref(`rooms/${currentRoomCode}/players`).once('value', snapshot => {
         const players = snapshot.val();
         for (let id in players) {
-          // Transition departed or shot players to RUN_AWAY without time indicators
           if (players[id].status === 'RUN_AWAY' || players[id].leftDuringGame) {
             db.ref(`rooms/${currentRoomCode}/players/${id}`).update({
               status: 'RUN_AWAY',
